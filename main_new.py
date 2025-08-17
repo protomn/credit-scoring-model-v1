@@ -268,10 +268,9 @@ def make_loan_decision(credit_data: dict, risk_assessment: dict, loan_request: L
     credit_adjustment = 0.5 + (credit_score * 0.5)  # 50-100% of requested amount
     max_loan_amount = loan_request.requested_amount * credit_adjustment if approved else 0
     
-    # Required collateral ratio (150% base + risk adjustment)
-    base_collateral_ratio = 1.5
-    risk_collateral_adjustment = combined_risk * 0.5
-    required_collateral_ratio = base_collateral_ratio + risk_collateral_adjustment
+    # Required collateral ratio using smart contract logic
+    from collateral_calculator import CollateralCalculator
+    required_collateral_ratio = CollateralCalculator.calculate_required_collateral_ratio(credit_score)
     
     # Generate decision reasons
     reasons = []

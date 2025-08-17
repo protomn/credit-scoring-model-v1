@@ -521,24 +521,23 @@ class LiquidationMonitor:
     async def calculate_partial_liquidation_amount(self, loan_id: str, 
                                                  current_eth_price: float) -> float:
         """
-        Calculate how much collateral to liquidate
+        Calculate how much collateral to liquidate using smart contract logic
         """
         
         loan_details = await self.smart_contract_interface.get_loan_details(loan_id)
         
-        # Calculate amount needed to bring back to safe ratio (150%)
-        target_ratio = 1.5
-        required_collateral_value = loan_details['loan_amount'] * target_ratio
-        current_collateral_value = loan_details['collateral_amount'] * current_eth_price
+        # Use the liquidation verifier to match smart contract exactly
+        from liquidation_verifier import LiquidationVerifier
         
-        if current_collateral_value > required_collateral_value:
-            return 0.0  # No liquidation needed
+        # Calculate using smart contract logic (5% base discount)
+        collateral_to_liquidate, debt_to_repay = LiquidationVerifier.calculate_partial_liquidation_amount_solidity(
+            loan_details['collateral_amount'],
+            loan_details['loan_amount'],
+            current_eth_price,
+            liquidation_discount_bp=500  # 5% base discount
+        )
         
-        # Calculate excess collateral to liquidate
-        excess_debt = loan_details['loan_amount'] - (current_collateral_value / target_ratio)
-        liquidation_amount = excess_debt / current_eth_price
-        
-        return min(liquidation_amount, loan_details['collateral_amount'] * 0.5)  # Max 50% liquidation
+        return collateral_to_liquidate
 
 class SmartContractInterface:
     """
