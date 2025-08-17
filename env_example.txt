@@ -1,0 +1,14 @@
+# Database Configuration
+DATABASE_URL=sqlite:///./defi_lending.db
+
+# JWT Security
+JWT_SECRET=your-super-secret-key-change-in-production
+
+# Ethereum Configuration
+ETHEREUM_RPC_URL=https://mainnet.infura.io/v3/your-key
+ETHERSCAN_API_KEY=your-etherscan-key
+
+# API Configuration
+API_HOST=0.0.0.0
+API_PORT=8000
+DEBUG=True 

@@ -1,5 +1,5 @@
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
@@ -8,6 +8,12 @@ import hashlib
 import json
 import random
 from typing import Optional
+from sqlalchemy.orm import Session
+from database import get_db
+from models import User, Loan, Transaction, CreditScore, BlockchainData
+from auth import get_current_active_user
+from user_management import router as user_router
+from blockchain_client import blockchain_client
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -15,6 +21,9 @@ logger = logging.getLogger(__name__)
 
 # Create the web application
 app = FastAPI(title="DeFi Lending Credit Scoring API", version="1.0.0")
+
+# Include user management routes
+app.include_router(user_router)
 
 @app.get("/health")
 async def health_check():
@@ -79,7 +88,7 @@ def validate_ethereum_address(address: str) -> bool:
     except ValueError:
         return False
 
-def calculate_credit_score_aloe_method(address: str) -> dict:
+async def calculate_credit_score_aloe_method(address: str) -> dict:
     """
     Calculate credit score using the ALOE (Autonomous Lending Organization on Ethereum) methodology
     
@@ -91,11 +100,11 @@ def calculate_credit_score_aloe_method(address: str) -> dict:
     5. Average Number of Credit Lines (ANCL)
     """
     
-    # Get mock data or generate deterministic scores
-    if address.lower() in MOCK_BLOCKCHAIN_DATA:
-        data = MOCK_BLOCKCHAIN_DATA[address.lower()]
-    else:
-        # Generate deterministic but varied data based on address
+    # Get real blockchain data
+    try:
+        data = await blockchain_client.get_blockchain_data(address)
+    except Exception as e:
+        # Fallback to mock data if blockchain call fails
         address_hash = hashlib.sha256(address.encode()).hexdigest()
         hash_int = int(address_hash[:16], 16)
         
@@ -335,7 +344,7 @@ async def health_check():
     }
 
 @app.post("/api/credit-score")
-async def get_credit_score(request: CreditScoreRequest):
+async def get_credit_score(request: CreditScoreRequest, db: Session = Depends(get_db)):
     """
     Get credit score for a wallet address
     """
@@ -343,15 +352,15 @@ async def get_credit_score(request: CreditScoreRequest):
     try:
         logger.info(f"Calculating credit score for {request.address}")
         
-        # Validate address format
-        if not validate_ethereum_address(request.address):
+        # Validate address format using blockchain client
+        if not await blockchain_client.validate_ethereum_address(request.address):
             raise HTTPException(status_code=400, detail="Invalid Ethereum address format")
         
         # Check cache first
         cache_key = request.address.lower()
         if cache_key in credit_scores_cache:
             cached_result = credit_scores_cache[cache_key]
-            if time.time() - cached_result["calculated_at"] < 300:  # 5 minute cache
+            if time.time() - cached_result.get("calculated_at", 0) < 300:  # 5 minute cache
                 logger.info("Returning cached credit score")
                 return {
                     "success": True,
@@ -361,7 +370,40 @@ async def get_credit_score(request: CreditScoreRequest):
                 }
         
         # Calculate credit score using our built-in ALOE method
-        credit_data = calculate_credit_score_aloe_method(request.address)
+        credit_data = await calculate_credit_score_aloe_method(request.address)
+        
+        # Store in database
+        try:
+            # Check if we already have blockchain data for this address
+            existing_data = db.query(BlockchainData).filter(BlockchainData.address == request.address).first()
+            
+            if existing_data:
+                # Update existing data
+                existing_data.transaction_count = credit_data["transaction_count"]
+                existing_data.total_volume = credit_data["total_volume"]
+                existing_data.defi_interactions = credit_data["defi_interactions"]
+                existing_data.gas_efficiency = credit_data["gas_efficiency"]
+                existing_data.unique_tokens = credit_data["unique_tokens"]
+                existing_data.liquidation_history = credit_data["liquidation_history"]
+                existing_data.on_time_payments = credit_data["on_time_payments"]
+            else:
+                # Create new blockchain data record
+                new_data = BlockchainData(
+                    address=request.address,
+                    transaction_count=credit_data["transaction_count"],
+                    total_volume=credit_data["total_volume"],
+                    defi_interactions=credit_data["defi_interactions"],
+                    gas_efficiency=credit_data["gas_efficiency"],
+                    unique_tokens=credit_data["unique_tokens"],
+                    liquidation_history=credit_data["liquidation_history"],
+                    on_time_payments=credit_data["on_time_payments"]
+                )
+                db.add(new_data)
+            
+            db.commit()
+        except Exception as e:
+            logger.error(f"Error storing blockchain data: {e}")
+            # Continue without storing to database
         
         # Cache the result
         credit_scores_cache[cache_key] = credit_data
